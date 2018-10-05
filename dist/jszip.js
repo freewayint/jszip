@@ -4229,7 +4229,7 @@ utils.inherits(ZstdWorker, GenericWorker);
 ZstdWorker.prototype.processChunk = function (chunk) {
     this.meta = chunk.meta;
 	
-    if (this._zstdBuffer === null)
+    if (this._zstdBuffer == null)
         this._zstdBuffer = new Uint8Array(0);
 	
 	var chunkbuff = utils.transformTo(ARRAY_TYPE, chunk.data);
@@ -4245,7 +4245,7 @@ ZstdWorker.prototype.processChunk = function (chunk) {
 ZstdWorker.prototype.flush = function () {
     GenericWorker.prototype.flush.call(this);
 	
-    if (this._zstdBuffer !== null) {
+    if (this._zstdBuffer != null) {
 		var result;
 		if (this._zstdAction === 'ZstdCompress')
 			result = zstd.compressSync(this._zstdBuffer, this._zstdOptions);
