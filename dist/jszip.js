@@ -210,8 +210,9 @@ exports.STORE = {
     }
 };
 exports.DEFLATE = require('./flate');
+exports.ZSTD = require('./zstd');
 
-},{"./flate":7,"./stream/GenericWorker":28}],4:[function(require,module,exports){
+},{"./flate":7,"./stream/GenericWorker":28,"./zstd":36}],4:[function(require,module,exports){
 'use strict';
 
 var utils = require('./utils');
@@ -324,7 +325,7 @@ module.exports = {
     Promise: ES6Promise
 };
 
-},{"lie":58}],7:[function(require,module,exports){
+},{"lie":59}],7:[function(require,module,exports){
 'use strict';
 var USE_TYPEDARRAY = (typeof Uint8Array !== 'undefined') && (typeof Uint16Array !== 'undefined') && (typeof Uint32Array !== 'undefined');
 
@@ -411,7 +412,7 @@ exports.uncompressWorker = function () {
     return new FlateWorker("Inflate", {});
 };
 
-},{"./stream/GenericWorker":28,"./utils":32,"pako":59}],8:[function(require,module,exports){
+},{"./stream/GenericWorker":28,"./utils":32,"pako":60}],8:[function(require,module,exports){
 'use strict';
 
 var utils = require('../utils');
@@ -3504,7 +3505,7 @@ exports.prepareContent = function(name, inputData, isBinary, isOptimizedBinarySt
     });
 };
 
-},{"./base64":1,"./external":6,"./nodejsUtils":12,"./support":30,"core-js/library/fn/set-immediate":36}],33:[function(require,module,exports){
+},{"./base64":1,"./external":6,"./nodejsUtils":12,"./support":30,"core-js/library/fn/set-immediate":37}],33:[function(require,module,exports){
 'use strict';
 var readerFor = require('./reader/readerFor');
 var utils = require('./utils');
@@ -4198,29 +4199,105 @@ for(var i = 0; i < removedMethods.length; i++) {
 module.exports = ZipObject;
 
 },{"./compressedObject":2,"./stream/DataWorker":27,"./stream/GenericWorker":28,"./stream/StreamHelper":29,"./utf8":31}],36:[function(require,module,exports){
+'use strict';
+var zstd = require("node-zstd2");
+var utils = require("./utils");
+var GenericWorker = require("./stream/GenericWorker");
+
+var ARRAY_TYPE = "uint8array";
+
+exports.magic = "\x09\x00"; // using the different magic number
+
+function ZstdWorker(action, options) {
+    GenericWorker.call(this, "ZstdWorker/" + action);
+
+    this._zstdAction = action;
+    this._zstdOptions = {
+		level: 9
+	};
+	
+    // the `meta` object from the last chunk received
+    // this allow this worker to pass around metadata
+    this.meta = {};
+}
+
+utils.inherits(ZstdWorker, GenericWorker);
+
+/**
+ * @see GenericWorker.processChunk
+ */
+ZstdWorker.prototype.processChunk = function (chunk) {
+    this.meta = chunk.meta;
+	
+    if (this._zstdBuffer === null)
+        this._zstdBuffer = new Uint8Array(0);
+	
+	var chunkbuff = utils.transformTo(ARRAY_TYPE, chunk.data);
+	var merged = new Uint8Array(this._zstdBuffer.length + chunkbuff.length);
+	merged.set(this._zstdBuffer);
+	merged.set(chunkbuff, this._zstdBuffer.length);
+	this._zstdBuffer = merged;
+};
+
+/**
+ * @see GenericWorker.flush
+ */
+ZstdWorker.prototype.flush = function () {
+    GenericWorker.prototype.flush.call(this);
+	
+    if (this._zstdBuffer !== null) {
+		var result;
+		if (this._zstdAction === 'ZstdCompress')
+			result = zstd.compressSync(this._zstdBuffer, this._zstdOptions);
+		else
+		if (this._zstdAction === 'ZstdUncompress')
+			result = zstd.decompressSync(this._zstdBuffer);
+		
+		this.push({
+			data: result,
+			meta: this.meta
+		});
+    }
+};
+/**
+ * @see GenericWorker.cleanUp
+ */
+ZstdWorker.prototype.cleanUp = function () {
+    GenericWorker.prototype.cleanUp.call(this);
+    this._zstdBuffer = null;
+};
+
+exports.compressWorker = function (compressionOptions) {
+    return new ZstdWorker("ZstdCompress", compressionOptions);
+};
+exports.uncompressWorker = function () {
+    return new ZstdWorker("ZstdUncompress", {});
+};
+
+},{"./stream/GenericWorker":28,"./utils":32,"node-zstd2":77}],37:[function(require,module,exports){
 require('../modules/web.immediate');
 module.exports = require('../modules/_core').setImmediate;
-},{"../modules/_core":40,"../modules/web.immediate":56}],37:[function(require,module,exports){
+},{"../modules/_core":41,"../modules/web.immediate":57}],38:[function(require,module,exports){
 module.exports = function(it){
   if(typeof it != 'function')throw TypeError(it + ' is not a function!');
   return it;
 };
-},{}],38:[function(require,module,exports){
+},{}],39:[function(require,module,exports){
 var isObject = require('./_is-object');
 module.exports = function(it){
   if(!isObject(it))throw TypeError(it + ' is not an object!');
   return it;
 };
-},{"./_is-object":51}],39:[function(require,module,exports){
+},{"./_is-object":52}],40:[function(require,module,exports){
 var toString = {}.toString;
 
 module.exports = function(it){
   return toString.call(it).slice(8, -1);
 };
-},{}],40:[function(require,module,exports){
+},{}],41:[function(require,module,exports){
 var core = module.exports = {version: '2.3.0'};
 if(typeof __e == 'number')__e = core; // eslint-disable-line no-undef
-},{}],41:[function(require,module,exports){
+},{}],42:[function(require,module,exports){
 // optional / simple context binding
 var aFunction = require('./_a-function');
 module.exports = function(fn, that, length){
@@ -4241,12 +4318,12 @@ module.exports = function(fn, that, length){
     return fn.apply(that, arguments);
   };
 };
-},{"./_a-function":37}],42:[function(require,module,exports){
+},{"./_a-function":38}],43:[function(require,module,exports){
 // Thank's IE8 for his funny defineProperty
 module.exports = !require('./_fails')(function(){
   return Object.defineProperty({}, 'a', {get: function(){ return 7; }}).a != 7;
 });
-},{"./_fails":45}],43:[function(require,module,exports){
+},{"./_fails":46}],44:[function(require,module,exports){
 var isObject = require('./_is-object')
   , document = require('./_global').document
   // in old IE typeof document.createElement is 'object'
@@ -4254,7 +4331,7 @@ var isObject = require('./_is-object')
 module.exports = function(it){
   return is ? document.createElement(it) : {};
 };
-},{"./_global":46,"./_is-object":51}],44:[function(require,module,exports){
+},{"./_global":47,"./_is-object":52}],45:[function(require,module,exports){
 var global    = require('./_global')
   , core      = require('./_core')
   , ctx       = require('./_ctx')
@@ -4316,7 +4393,7 @@ $export.W = 32;  // wrap
 $export.U = 64;  // safe
 $export.R = 128; // real proto method for `library` 
 module.exports = $export;
-},{"./_core":40,"./_ctx":41,"./_global":46,"./_hide":47}],45:[function(require,module,exports){
+},{"./_core":41,"./_ctx":42,"./_global":47,"./_hide":48}],46:[function(require,module,exports){
 module.exports = function(exec){
   try {
     return !!exec();
@@ -4324,12 +4401,12 @@ module.exports = function(exec){
     return true;
   }
 };
-},{}],46:[function(require,module,exports){
+},{}],47:[function(require,module,exports){
 // https://github.com/zloirock/core-js/issues/86#issuecomment-115759028
 var global = module.exports = typeof window != 'undefined' && window.Math == Math
   ? window : typeof self != 'undefined' && self.Math == Math ? self : Function('return this')();
 if(typeof __g == 'number')__g = global; // eslint-disable-line no-undef
-},{}],47:[function(require,module,exports){
+},{}],48:[function(require,module,exports){
 var dP         = require('./_object-dp')
   , createDesc = require('./_property-desc');
 module.exports = require('./_descriptors') ? function(object, key, value){
@@ -4338,13 +4415,13 @@ module.exports = require('./_descriptors') ? function(object, key, value){
   object[key] = value;
   return object;
 };
-},{"./_descriptors":42,"./_object-dp":52,"./_property-desc":53}],48:[function(require,module,exports){
+},{"./_descriptors":43,"./_object-dp":53,"./_property-desc":54}],49:[function(require,module,exports){
 module.exports = require('./_global').document && document.documentElement;
-},{"./_global":46}],49:[function(require,module,exports){
+},{"./_global":47}],50:[function(require,module,exports){
 module.exports = !require('./_descriptors') && !require('./_fails')(function(){
   return Object.defineProperty(require('./_dom-create')('div'), 'a', {get: function(){ return 7; }}).a != 7;
 });
-},{"./_descriptors":42,"./_dom-create":43,"./_fails":45}],50:[function(require,module,exports){
+},{"./_descriptors":43,"./_dom-create":44,"./_fails":46}],51:[function(require,module,exports){
 // fast apply, http://jsperf.lnkit.com/fast-apply/5
 module.exports = function(fn, args, that){
   var un = that === undefined;
@@ -4361,11 +4438,11 @@ module.exports = function(fn, args, that){
                       : fn.call(that, args[0], args[1], args[2], args[3]);
   } return              fn.apply(that, args);
 };
-},{}],51:[function(require,module,exports){
+},{}],52:[function(require,module,exports){
 module.exports = function(it){
   return typeof it === 'object' ? it !== null : typeof it === 'function';
 };
-},{}],52:[function(require,module,exports){
+},{}],53:[function(require,module,exports){
 var anObject       = require('./_an-object')
   , IE8_DOM_DEFINE = require('./_ie8-dom-define')
   , toPrimitive    = require('./_to-primitive')
@@ -4382,7 +4459,7 @@ exports.f = require('./_descriptors') ? Object.defineProperty : function defineP
   if('value' in Attributes)O[P] = Attributes.value;
   return O;
 };
-},{"./_an-object":38,"./_descriptors":42,"./_ie8-dom-define":49,"./_to-primitive":55}],53:[function(require,module,exports){
+},{"./_an-object":39,"./_descriptors":43,"./_ie8-dom-define":50,"./_to-primitive":56}],54:[function(require,module,exports){
 module.exports = function(bitmap, value){
   return {
     enumerable  : !(bitmap & 1),
@@ -4391,7 +4468,7 @@ module.exports = function(bitmap, value){
     value       : value
   };
 };
-},{}],54:[function(require,module,exports){
+},{}],55:[function(require,module,exports){
 var ctx                = require('./_ctx')
   , invoke             = require('./_invoke')
   , html               = require('./_html')
@@ -4467,7 +4544,7 @@ module.exports = {
   set:   setTask,
   clear: clearTask
 };
-},{"./_cof":39,"./_ctx":41,"./_dom-create":43,"./_global":46,"./_html":48,"./_invoke":50}],55:[function(require,module,exports){
+},{"./_cof":40,"./_ctx":42,"./_dom-create":44,"./_global":47,"./_html":49,"./_invoke":51}],56:[function(require,module,exports){
 // 7.1.1 ToPrimitive(input [, PreferredType])
 var isObject = require('./_is-object');
 // instead of the ES6 spec version, we didn't implement @@toPrimitive case
@@ -4480,14 +4557,14 @@ module.exports = function(it, S){
   if(!S && typeof (fn = it.toString) == 'function' && !isObject(val = fn.call(it)))return val;
   throw TypeError("Can't convert object to primitive value");
 };
-},{"./_is-object":51}],56:[function(require,module,exports){
+},{"./_is-object":52}],57:[function(require,module,exports){
 var $export = require('./_export')
   , $task   = require('./_task');
 $export($export.G + $export.B, {
   setImmediate:   $task.set,
   clearImmediate: $task.clear
 });
-},{"./_export":44,"./_task":54}],57:[function(require,module,exports){
+},{"./_export":45,"./_task":55}],58:[function(require,module,exports){
 (function (global){
 'use strict';
 var Mutation = global.MutationObserver || global.WebKitMutationObserver;
@@ -4560,7 +4637,7 @@ function immediate(task) {
 }
 
 }).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{}],58:[function(require,module,exports){
+},{}],59:[function(require,module,exports){
 'use strict';
 var immediate = require('immediate');
 
@@ -4815,7 +4892,7 @@ function race(iterable) {
   }
 }
 
-},{"immediate":57}],59:[function(require,module,exports){
+},{"immediate":58}],60:[function(require,module,exports){
 // Top level file is just a mixin of submodules & constants
 'use strict';
 
@@ -4831,7 +4908,7 @@ assign(pako, deflate, inflate, constants);
 
 module.exports = pako;
 
-},{"./lib/deflate":60,"./lib/inflate":61,"./lib/utils/common":62,"./lib/zlib/constants":65}],60:[function(require,module,exports){
+},{"./lib/deflate":61,"./lib/inflate":62,"./lib/utils/common":63,"./lib/zlib/constants":66}],61:[function(require,module,exports){
 'use strict';
 
 
@@ -5233,7 +5310,7 @@ exports.deflate = deflate;
 exports.deflateRaw = deflateRaw;
 exports.gzip = gzip;
 
-},{"./utils/common":62,"./utils/strings":63,"./zlib/deflate":67,"./zlib/messages":72,"./zlib/zstream":74}],61:[function(require,module,exports){
+},{"./utils/common":63,"./utils/strings":64,"./zlib/deflate":68,"./zlib/messages":73,"./zlib/zstream":75}],62:[function(require,module,exports){
 'use strict';
 
 
@@ -5653,7 +5730,7 @@ exports.inflate = inflate;
 exports.inflateRaw = inflateRaw;
 exports.ungzip  = inflate;
 
-},{"./utils/common":62,"./utils/strings":63,"./zlib/constants":65,"./zlib/gzheader":68,"./zlib/inflate":70,"./zlib/messages":72,"./zlib/zstream":74}],62:[function(require,module,exports){
+},{"./utils/common":63,"./utils/strings":64,"./zlib/constants":66,"./zlib/gzheader":69,"./zlib/inflate":71,"./zlib/messages":73,"./zlib/zstream":75}],63:[function(require,module,exports){
 'use strict';
 
 
@@ -5757,7 +5834,7 @@ exports.setTyped = function (on) {
 
 exports.setTyped(TYPED_OK);
 
-},{}],63:[function(require,module,exports){
+},{}],64:[function(require,module,exports){
 // String encode/decode helpers
 'use strict';
 
@@ -5944,7 +6021,7 @@ exports.utf8border = function (buf, max) {
   return (pos + _utf8len[buf[pos]] > max) ? pos : max;
 };
 
-},{"./common":62}],64:[function(require,module,exports){
+},{"./common":63}],65:[function(require,module,exports){
 'use strict';
 
 // Note: adler32 takes 12% for level 0 and 2% for level 6.
@@ -5997,7 +6074,7 @@ function adler32(adler, buf, len, pos) {
 
 module.exports = adler32;
 
-},{}],65:[function(require,module,exports){
+},{}],66:[function(require,module,exports){
 'use strict';
 
 // (C) 1995-2013 Jean-loup Gailly and Mark Adler
@@ -6067,7 +6144,7 @@ module.exports = {
   //Z_NULL:                 null // Use -1 or null inline, depending on var type
 };
 
-},{}],66:[function(require,module,exports){
+},{}],67:[function(require,module,exports){
 'use strict';
 
 // Note: we can't get significant speed boost here.
@@ -6128,7 +6205,7 @@ function crc32(crc, buf, len, pos) {
 
 module.exports = crc32;
 
-},{}],67:[function(require,module,exports){
+},{}],68:[function(require,module,exports){
 'use strict';
 
 // (C) 1995-2013 Jean-loup Gailly and Mark Adler
@@ -8004,7 +8081,7 @@ exports.deflatePrime = deflatePrime;
 exports.deflateTune = deflateTune;
 */
 
-},{"../utils/common":62,"./adler32":64,"./crc32":66,"./messages":72,"./trees":73}],68:[function(require,module,exports){
+},{"../utils/common":63,"./adler32":65,"./crc32":67,"./messages":73,"./trees":74}],69:[function(require,module,exports){
 'use strict';
 
 // (C) 1995-2013 Jean-loup Gailly and Mark Adler
@@ -8064,7 +8141,7 @@ function GZheader() {
 
 module.exports = GZheader;
 
-},{}],69:[function(require,module,exports){
+},{}],70:[function(require,module,exports){
 'use strict';
 
 // (C) 1995-2013 Jean-loup Gailly and Mark Adler
@@ -8411,7 +8488,7 @@ module.exports = function inflate_fast(strm, start) {
   return;
 };
 
-},{}],70:[function(require,module,exports){
+},{}],71:[function(require,module,exports){
 'use strict';
 
 // (C) 1995-2013 Jean-loup Gailly and Mark Adler
@@ -9969,7 +10046,7 @@ exports.inflateSyncPoint = inflateSyncPoint;
 exports.inflateUndermine = inflateUndermine;
 */
 
-},{"../utils/common":62,"./adler32":64,"./crc32":66,"./inffast":69,"./inftrees":71}],71:[function(require,module,exports){
+},{"../utils/common":63,"./adler32":65,"./crc32":67,"./inffast":70,"./inftrees":72}],72:[function(require,module,exports){
 'use strict';
 
 // (C) 1995-2013 Jean-loup Gailly and Mark Adler
@@ -10314,7 +10391,7 @@ module.exports = function inflate_table(type, lens, lens_index, codes, table, ta
   return 0;
 };
 
-},{"../utils/common":62}],72:[function(require,module,exports){
+},{"../utils/common":63}],73:[function(require,module,exports){
 'use strict';
 
 // (C) 1995-2013 Jean-loup Gailly and Mark Adler
@@ -10348,7 +10425,7 @@ module.exports = {
   '-6':   'incompatible version' /* Z_VERSION_ERROR (-6) */
 };
 
-},{}],73:[function(require,module,exports){
+},{}],74:[function(require,module,exports){
 'use strict';
 
 // (C) 1995-2013 Jean-loup Gailly and Mark Adler
@@ -11570,7 +11647,7 @@ exports._tr_flush_block  = _tr_flush_block;
 exports._tr_tally = _tr_tally;
 exports._tr_align = _tr_align;
 
-},{"../utils/common":62}],74:[function(require,module,exports){
+},{"../utils/common":63}],75:[function(require,module,exports){
 'use strict';
 
 // (C) 1995-2013 Jean-loup Gailly and Mark Adler
@@ -11619,5 +11696,425 @@ function ZStream() {
 
 module.exports = ZStream;
 
-},{}]},{},[10])(10)
+},{}],76:[function(require,module,exports){
+
+/**
+ * Module dependencies.
+ */
+
+var fs = require('fs')
+  , path = require('path')
+  , join = path.join
+  , dirname = path.dirname
+  , exists = ((fs.accessSync && function (path) { try { fs.accessSync(path); } catch (e) { return false; } return true; })
+      || fs.existsSync || path.existsSync)
+  , defaults = {
+        arrow: process.env.NODE_BINDINGS_ARROW || ' → '
+      , compiled: process.env.NODE_BINDINGS_COMPILED_DIR || 'compiled'
+      , platform: process.platform
+      , arch: process.arch
+      , version: process.versions.node
+      , bindings: 'bindings.node'
+      , try: [
+          // node-gyp's linked version in the "build" dir
+          [ 'module_root', 'build', 'bindings' ]
+          // node-waf and gyp_addon (a.k.a node-gyp)
+        , [ 'module_root', 'build', 'Debug', 'bindings' ]
+        , [ 'module_root', 'build', 'Release', 'bindings' ]
+          // Debug files, for development (legacy behavior, remove for node v0.9)
+        , [ 'module_root', 'out', 'Debug', 'bindings' ]
+        , [ 'module_root', 'Debug', 'bindings' ]
+          // Release files, but manually compiled (legacy behavior, remove for node v0.9)
+        , [ 'module_root', 'out', 'Release', 'bindings' ]
+        , [ 'module_root', 'Release', 'bindings' ]
+          // Legacy from node-waf, node <= 0.4.x
+        , [ 'module_root', 'build', 'default', 'bindings' ]
+          // Production "Release" buildtype binary (meh...)
+        , [ 'module_root', 'compiled', 'version', 'platform', 'arch', 'bindings' ]
+        ]
+    }
+
+/**
+ * The main `bindings()` function loads the compiled bindings for a given module.
+ * It uses V8's Error API to determine the parent filename that this function is
+ * being invoked from, which is then used to find the root directory.
+ */
+
+function bindings (opts) {
+
+  // Argument surgery
+  if (typeof opts == 'string') {
+    opts = { bindings: opts }
+  } else if (!opts) {
+    opts = {}
+  }
+
+  // maps `defaults` onto `opts` object
+  Object.keys(defaults).map(function(i) {
+    if (!(i in opts)) opts[i] = defaults[i];
+  });
+
+  // Get the module root
+  if (!opts.module_root) {
+    opts.module_root = exports.getRoot(exports.getFileName())
+  }
+
+  // Ensure the given bindings name ends with .node
+  if (path.extname(opts.bindings) != '.node') {
+    opts.bindings += '.node'
+  }
+
+  var tries = []
+    , i = 0
+    , l = opts.try.length
+    , n
+    , b
+    , err
+
+  for (; i<l; i++) {
+    n = join.apply(null, opts.try[i].map(function (p) {
+      return opts[p] || p
+    }))
+    tries.push(n)
+    try {
+      b = opts.path ? require.resolve(n) : require(n)
+      if (!opts.path) {
+        b.path = n
+      }
+      return b
+    } catch (e) {
+      if (!/not find/i.test(e.message)) {
+        throw e
+      }
+    }
+  }
+
+  err = new Error('Could not locate the bindings file. Tried:\n'
+    + tries.map(function (a) { return opts.arrow + a }).join('\n'))
+  err.tries = tries
+  throw err
+}
+module.exports = exports = bindings
+
+
+/**
+ * Gets the filename of the JavaScript file that invokes this function.
+ * Used to help find the root directory of a module.
+ * Optionally accepts an filename argument to skip when searching for the invoking filename
+ */
+
+exports.getFileName = function getFileName (calling_file) {
+  var origPST = Error.prepareStackTrace
+    , origSTL = Error.stackTraceLimit
+    , dummy = {}
+    , fileName
+
+  Error.stackTraceLimit = 10
+
+  Error.prepareStackTrace = function (e, st) {
+    for (var i=0, l=st.length; i<l; i++) {
+      fileName = st[i].getFileName()
+      if (fileName !== __filename) {
+        if (calling_file) {
+            if (fileName !== calling_file) {
+              return
+            }
+        } else {
+          return
+        }
+      }
+    }
+  }
+
+  // run the 'prepareStackTrace' function above
+  Error.captureStackTrace(dummy)
+  dummy.stack
+
+  // cleanup
+  Error.prepareStackTrace = origPST
+  Error.stackTraceLimit = origSTL
+
+  return fileName
+}
+
+/**
+ * Gets the root directory of a module, given an arbitrary filename
+ * somewhere in the module tree. The "root directory" is the directory
+ * containing the `package.json` file.
+ *
+ *   In:  /home/nate/node-native-module/lib/index.js
+ *   Out: /home/nate/node-native-module
+ */
+
+exports.getRoot = function getRoot (file) {
+  var dir = dirname(file)
+    , prev
+  while (true) {
+    if (dir === '.') {
+      // Avoids an infinite loop in rare cases, like the REPL
+      dir = process.cwd()
+    }
+    if (exists(join(dir, 'package.json')) || exists(join(dir, 'node_modules'))) {
+      // Found the 'package.json' file or 'node_modules' dir; we're done
+      return dir
+    }
+    if (prev === dir) {
+      // Got to the top
+      throw new Error('Could not find module root given file: "' + file
+                    + '". Do you have a `package.json` file? ')
+    }
+    // Try the parent dir next
+    prev = dir
+    dir = join(dir, '..')
+  }
+}
+
+},{"fs":undefined,"path":undefined}],77:[function(require,module,exports){
+'use strict';
+
+exports.compress = compress;
+exports.decompress = decompress;
+exports.compressSync = compressSync;
+exports.decompressSync = decompressSync;
+exports.compressStream = compressStream;
+exports.decompressStream = decompressStream;
+
+var compressor = require('bindings')('nzcompressor.node');
+var decompressor = require('bindings')('nzdecompressor.node');
+var Transform = require('stream').Transform;
+var util = require('util');
+
+function compress(input, params, cb) {
+  if (arguments.length === 2) {
+    cb = params;
+    params = {};
+  }
+  if (!Buffer.isBuffer(input)) {
+    process.nextTick(cb, new Error('Input is not a buffer.'));
+    return;
+  }
+  if (typeof cb !== 'function') {
+    process.nextTick(cb, new Error('Second argument is not a function.'));
+    return;
+  }
+  var stream = new TransformStreamCompressor(params);
+  var chunks = [];
+  var length = 0;
+  stream.on('error', cb);
+  stream.on('data', function(c) {
+    chunks.push(c);
+    length += c.length;
+  });
+  stream.on('end', function() {
+    cb(null, Buffer.concat(chunks, length));
+  });
+  stream.end(input);
+}
+
+function decompress(input, params, cb) {
+  if (arguments.length === 2) {
+    cb = params;
+    params = {};
+  }
+  if (!Buffer.isBuffer(input)) {
+    process.nextTick(cb, new Error('Input is not a buffer.'));
+    return;
+  }
+  if (typeof cb !== 'function') {
+    process.nextTick(cb, new Error('Second argument is not a function.'));
+    return;
+  }
+  var stream = new TransformStreamDecompressor(params);
+  var chunks = [];
+  var length = 0;
+  stream.on('error', cb);
+  stream.on('data', function(c) {
+    chunks.push(c);
+    length += c.length;
+  });
+  stream.on('end', function() {
+    cb(null, Buffer.concat(chunks, length));
+  });
+  stream.end(input);
+}
+
+function compressSync(input, params) {
+  if (!Buffer.isBuffer(input)) {
+    throw new Error('Input is not a buffer.');
+  }
+  var stream = new TransformStreamCompressor(params || {}, true);
+  var chunks = [];
+  var length = 0;
+  stream.on('error', function(e) {
+    throw e;
+  });
+  stream.on('data', function(c) {
+    chunks.push(c);
+    length += c.length;
+  });
+  stream.end(input);
+  return Buffer.concat(chunks, length);
+}
+
+function decompressSync(input, params) {
+  if (!Buffer.isBuffer(input)) {
+    throw new Error('Input is not a buffer.');
+  }
+  var stream = new TransformStreamDecompressor(params || {}, true);
+  var chunks = [];
+  var length = 0;
+  stream.on('error', function(e) {
+    throw e;
+  });
+  stream.on('data', function(c) {
+    chunks.push(c);
+    length += c.length;
+  });
+  stream.end(input);
+  return Buffer.concat(chunks, length);
+}
+
+function TransformStreamCompressor(params, sync) {
+  Transform.call(this, params);
+
+  this.compressor = new compressor.StreamCompressor(params || {});
+  this.sync = sync || false;
+  var blockSize = this.compressor.getBlockSize();
+  this.status = {
+    blockSize: blockSize,
+    remaining: blockSize
+  };
+}
+util.inherits(TransformStreamCompressor, Transform);
+
+TransformStreamCompressor.prototype._transform = function(chunk, encoding, next) {
+  compressStreamChunk(this, chunk, this.compressor, this.status, this.sync, next);
+};
+
+TransformStreamCompressor.prototype._flush = function(done) {
+  var that = this;
+  this.compressor.compress(true, function(err, output) {
+    if (err) {
+      return done(err);
+    }
+    if (output) {
+      for (var i = 0; i < output.length; i++) {
+        that.push(output[i]);
+      }
+    }
+    done();
+  }, !this.sync);
+};
+
+// We need to fill the blockSize for better compression results
+function compressStreamChunk(stream, chunk, compressor, status, sync, done) {
+  var length = chunk.length;
+
+  if (length > status.remaining) {
+    var slicedChunk = chunk.slice(0, status.remaining);
+    chunk = chunk.slice(status.remaining);
+    status.remaining = status.blockSize;
+
+    compressor.copy(slicedChunk);
+    compressor.compress(false, function(err, output) {
+      if (err) {
+        return done(err);
+      }
+      if (output) {
+        for (var i = 0; i < output.length; i++) {
+          stream.push(output[i]);
+        }
+      }
+      compressStreamChunk(stream, chunk, compressor, status, sync, done);
+    }, !sync);
+  } else if (length <= status.remaining) {
+    status.remaining -= length;
+    compressor.copy(chunk);
+    done();
+  }
+}
+
+function compressStream(params) {
+  return new TransformStreamCompressor(params);
+}
+
+function TransformStreamDecompressor(params, sync) {
+  Transform.call(this, params);
+
+  this.decompressor = new decompressor.StreamDecompressor(params || {});
+  this.sync = sync || false;
+  var blockSize = this.decompressor.getBlockSize();
+  this.status = {
+    blockSize: blockSize,
+    remaining: blockSize
+  };
+}
+util.inherits(TransformStreamDecompressor, Transform);
+
+TransformStreamDecompressor.prototype._transform = function(chunk, encoding, next) {
+  decompressStreamChunk(this, chunk, this.decompressor, this.status, this.sync, next);
+};
+
+// We need to fill the blockSize for better compression results
+function decompressStreamChunk(stream, chunk, decompressor, status, sync, done) {
+  var length = chunk.length;
+
+  if (length > status.remaining) {
+    var slicedChunk = chunk.slice(0, status.remaining);
+    chunk = chunk.slice(status.remaining);
+    status.remaining = status.blockSize;
+
+    decompressor.copy(slicedChunk);
+    decompressor.decompress(function(err, output) {
+      if (err) {
+        return done(err);
+      }
+      if (output) {
+        for (var i = 0; i < output.length; i++) {
+          stream.push(output[i]);
+        }
+      }
+      decompressStreamChunk(stream, chunk, decompressor, status, sync, done);
+    }, !sync);
+  } else if (length < status.remaining) {
+    status.remaining -= length;
+    decompressor.copy(chunk);
+    done();
+  } else { // length === status.remaining
+    status.remaining = status.blockSize;
+    decompressor.copy(chunk);
+    decompressor.decompress(function(err, output) {
+      if (err) {
+        return done(err);
+      }
+      if (output) {
+        for (var i = 0; i < output.length; i++) {
+          stream.push(output[i]);
+        }
+      }
+      done();
+    }, !sync);
+  }
+}
+
+TransformStreamDecompressor.prototype._flush = function(done) {
+  var that = this;
+  this.decompressor.decompress(function(err, output) {
+    if (err) {
+      return done(err);
+    }
+    if (output) {
+      for (var i = 0; i < output.length; i++) {
+        that.push(output[i]);
+      }
+    }
+    done();
+  }, !this.sync);
+};
+
+function decompressStream(params) {
+  return new TransformStreamDecompressor(params);
+}
+
+},{"bindings":76,"stream":undefined,"util":undefined}]},{},[10])(10)
 });
